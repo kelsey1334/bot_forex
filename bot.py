@@ -1,20 +1,16 @@
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
-from tvDatafeed import TvDatafeed, Interval
+from tradingview_ta import TA_Handler, Interval
 import openai
 
-# Khai báo token và key từ biến môi trường
+# Lấy token từ biến môi trường
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 openai.api_key = OPENAI_API_KEY
 
-# Khởi tạo TradingView datafeed - nếu bạn có username/password tradingview, truyền vào TvDatafeed(username, password)
-# Nếu không, để trống thì có thể lấy dữ liệu hạn chế hoặc lỗi tùy tình trạng
-tv = TvDatafeed()
-
-# Mapping các khung thời gian
+# Khung thời gian và mapping tương ứng tradingview_ta
 timeframes = {
     '5 phút': '5',
     '15 phút': '15',
@@ -27,18 +23,20 @@ timeframes = {
 }
 
 interval_map = {
-    '5': Interval.in_5_minute,
-    '15': Interval.in_15_minute,
-    '60': Interval.in_1_hour,
-    '240': Interval.in_4_hour,
-    '720': Interval.in_12_hour,
-    'D': Interval.in_daily,
-    'W': Interval.in_weekly,
-    'M': Interval.in_monthly,
+    '5': Interval.INTERVAL_5_MINUTES,
+    '15': Interval.INTERVAL_15_MINUTES,
+    '60': Interval.INTERVAL_1_HOUR,
+    '240': Interval.INTERVAL_4_HOURS,
+    '720': Interval.INTERVAL_12_HOURS,
+    'D': Interval.INTERVAL_1_DAY,
+    'W': Interval.INTERVAL_1_WEEK,
+    'M': Interval.INTERVAL_1_MONTH,
 }
 
 def start(update: Update, context: CallbackContext):
-    update.message.reply_text("Chào bạn, gửi lệnh /phantich <cặp tiền ví dụ EURUSD> để phân tích cấu trúc thị trường.")
+    update.message.reply_text(
+        "Chào bạn! Gửi lệnh /phantich <cặp tiền ví dụ EURUSD> để phân tích cấu trúc thị trường Forex."
+    )
 
 def phantich(update: Update, context: CallbackContext):
     if len(context.args) != 1:
@@ -50,43 +48,44 @@ def phantich(update: Update, context: CallbackContext):
     reply_markup = InlineKeyboardMarkup(keyboard)
     update.message.reply_text("Chọn khung thời gian muốn phân tích:", reply_markup=reply_markup)
 
-def get_candles_from_tradingview(pair, timeframe):
+def get_analysis_from_tradingview(pair: str, timeframe: str):
     try:
-        interval = interval_map.get(timeframe, Interval.in_daily)
-        data = tv.get_hist(pair, 'FX', interval, n_bars=100)
-        candles = data.to_dict('records')
-        return candles
+        interval = interval_map.get(timeframe, Interval.INTERVAL_1_DAY)
+        handler = TA_Handler(
+            symbol=pair,
+            exchange="FX_IDC",
+            screener="forex",
+            interval=interval
+        )
+        analysis = handler.get_analysis()
+        return {
+            "summary": analysis.summary,
+            "oscillators": analysis.oscillators,
+            "moving_averages": analysis.moving_averages
+        }
     except Exception as e:
         return None
 
-def analyze_market_structure_with_gpt(pair, timeframe, candles):
-    if not candles:
-        return "Không lấy được dữ liệu nến từ TradingView."
-
-    simplified_candles = [{
-        "datetime": c.get('datetime').strftime("%Y-%m-%d %H:%M") if c.get('datetime') else '',
-        "open": c.get('open'),
-        "high": c.get('high'),
-        "low": c.get('low'),
-        "close": c.get('close'),
-        "volume": c.get('volume')
-    } for c in candles]
+def analyze_market_structure_with_gpt(pair: str, timeframe: str, data: dict):
+    if not data:
+        return "Không lấy được dữ liệu phân tích từ TradingView."
 
     prompt = f"""
-Bạn là chuyên gia phân tích cấu trúc thị trường Forex. 
-Dữ liệu dưới đây là 100 cây nến gần nhất của cặp {pair} ở khung thời gian {timeframe}. 
-Hãy phân tích xu hướng, chỉ ra các vùng hỗ trợ và kháng cự quan trọng, và các điểm cần lưu ý dựa trên cấu trúc thị trường.
+Bạn là chuyên gia phân tích cấu trúc thị trường Forex.
+Dữ liệu phân tích kỹ thuật dưới đây là cho cặp {pair} ở khung thời gian {timeframe}:
+- Tổng quan: {data['summary']}
+- Dao động (Oscillators): {data['oscillators']}
+- Trung bình động (Moving Averages): {data['moving_averages']}
 
-Dữ liệu nến (đã được rút gọn):
-{simplified_candles}
+Hãy phân tích xu hướng, chỉ ra các vùng hỗ trợ và kháng cự quan trọng, và các điểm cần lưu ý dựa trên dữ liệu này.
 """
 
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4.1-nano",
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.5,
-            max_tokens=200000
+            max_tokens=500
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
@@ -95,12 +94,12 @@ Dữ liệu nến (đã được rút gọn):
 def button_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
-    pair, timeframe = query.data.split('|')
 
+    pair, timeframe = query.data.split('|')
     query.edit_message_text(text=f"Đang lấy dữ liệu và phân tích cặp {pair} khung {timeframe}... Vui lòng đợi.")
 
-    candles = get_candles_from_tradingview(pair, timeframe)
-    analysis = analyze_market_structure_with_gpt(pair, timeframe, candles)
+    data = get_analysis_from_tradingview(pair, timeframe)
+    analysis = analyze_market_structure_with_gpt(pair, timeframe, data)
 
     query.edit_message_text(text=f"Phân tích cấu trúc thị trường cặp {pair} khung {timeframe}:\n\n{analysis}")
 
