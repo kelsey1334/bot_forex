@@ -1,21 +1,19 @@
 import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from tradingview_ta import TA_Handler, Interval
 import openai
 
-# Lấy token từ biến môi trường
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
 openai.api_key = OPENAI_API_KEY
 
-# Khung thời gian và mapping tương ứng tradingview_ta
 timeframes = {
     '5 phút': '5',
     '15 phút': '15',
     '1 giờ': '60',
-    '2 giờ': '120',       # Thay cho 12 giờ
+    '2 giờ': '120',
     '4 giờ': '240',
     '1 ngày': 'D',
     '1 tuần': 'W',
@@ -33,20 +31,20 @@ interval_map = {
     'M': Interval.INTERVAL_1_MONTH,
 }
 
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text(
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
         "Chào bạn! Gửi lệnh /phantich <cặp tiền ví dụ EURUSD> để phân tích cấu trúc thị trường Forex."
     )
 
-def phantich(update: Update, context: CallbackContext):
+async def phantich(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) != 1:
-        update.message.reply_text("Vui lòng nhập đúng định dạng: /phantich <cặp tiền ví dụ: EURUSD>")
+        await update.message.reply_text("Vui lòng nhập đúng định dạng: /phantich <cặp tiền ví dụ: EURUSD>")
         return
     
     pair = context.args[0].upper()
     keyboard = [[InlineKeyboardButton(k, callback_data=f"{pair}|{v}")] for k, v in timeframes.items()]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    update.message.reply_text("Chọn khung thời gian muốn phân tích:", reply_markup=reply_markup)
+    await update.message.reply_text("Chọn khung thời gian muốn phân tích:", reply_markup=reply_markup)
 
 def get_analysis_from_tradingview(pair: str, timeframe: str):
     try:
@@ -63,7 +61,7 @@ def get_analysis_from_tradingview(pair: str, timeframe: str):
             "oscillators": analysis.oscillators,
             "moving_averages": analysis.moving_averages
         }
-    except Exception as e:
+    except Exception:
         return None
 
 def analyze_market_structure_with_gpt(pair: str, timeframe: str, data: dict):
@@ -91,28 +89,26 @@ Hãy phân tích xu hướng, chỉ ra các vùng hỗ trợ và kháng cự qua
     except Exception as e:
         return f"Lỗi khi gọi OpenAI: {e}"
 
-def button_callback(update: Update, context: CallbackContext):
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    query.answer()
+    await query.answer()
 
     pair, timeframe = query.data.split('|')
-    query.edit_message_text(text=f"Đang lấy dữ liệu và phân tích cặp {pair} khung {timeframe}... Vui lòng đợi.")
+    await query.edit_message_text(text=f"Đang lấy dữ liệu và phân tích cặp {pair} khung {timeframe}... Vui lòng đợi.")
 
     data = get_analysis_from_tradingview(pair, timeframe)
     analysis = analyze_market_structure_with_gpt(pair, timeframe, data)
 
-    query.edit_message_text(text=f"Phân tích cấu trúc thị trường cặp {pair} khung {timeframe}:\n\n{analysis}")
+    await query.edit_message_text(text=f"Phân tích cấu trúc thị trường cặp {pair} khung {timeframe}:\n\n{analysis}")
 
 def main():
-    updater = Updater(TELEGRAM_BOT_TOKEN)
-    dp = updater.dispatcher
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("phantich", phantich))
-    dp.add_handler(CallbackQueryHandler(button_callback))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("phantich", phantich))
+    app.add_handler(CallbackQueryHandler(button_callback))
 
-    updater.start_polling()
-    updater.idle()
+    app.run_polling()
 
 if __name__ == '__main__':
     main()
