@@ -1,4 +1,4 @@
 python-telegram-bot==20.3
-tradingview_ta==1.8.11
+tradingview_ta>=3.2.10
 openai==0.27.0
 pandas
