@@ -1,4 +1,4 @@
 python-telegram-bot==20.3
-tvdatafeed==0.2.5
+git+https://github.com/StreamAlpha/tvdatafeed.git@master
 openai==0.27.0
 pandas
