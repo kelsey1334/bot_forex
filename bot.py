@@ -83,10 +83,10 @@ Dữ liệu nến (đã được rút gọn):
 
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+            model="gpt-4.1-nano",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.5,
-            max_tokens=500
+            max_tokens=200000
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
